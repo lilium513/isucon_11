@@ -680,35 +680,84 @@ def get_isu_conditions_from_db(
 
 @app.route("/api/trend", methods=["GET"])
 def get_trend():
-    """ISUの性格毎の最新のコンディション情報"""
-    query = "SELECT `character` FROM `isu` GROUP BY `character`"
-    character_list = [row["character"] for row in select_all(query)]
+   all_data = select_all(
+                """WITH temp AS(
+            SELECT
+            max(timestamp) AS  ts,
+            jia_isu_uuid
+            FROM 
+            isu_condition
+            GROUP BY 
+            jia_isu_uuid
+        ),
+        temp2 AS (
+            SELECT 
+            t1.jia_isu_uuid,
+            t1.`condition`,
+            t2.ts  AS timestamp
+            FROM 
+            isu_condition AS t1
+            JOIN  
+            temp AS t2
+            ON
+            t1.timestamp = t2.ts
+            AND 
+            t1.jia_isu_uuid = t2.jia_isu_uuid
+        ),
+        temp3 AS (
+            SELECT 
+                t1.character,
+                t2.`condition`,
+                t2.jia_isu_uuid,
+                t2.timestamp
+            FROM 
+                isu AS t1
+            JOIN
+                temp2 AS t2
+            ON
+            t1.jia_isu_uuid = t2.jia_isu_uuid
+        )
 
-    res = []
+        SELECT 
+            *
+        FROM 
+            temp3;
 
+        """
+    )
+
+    character_list = [row["character"] for row in all_data]
+    di = {}
+    for c in character_list:
+        di[c] = [[],[],[]]
+        
+
+   
+
+
+    for data in all_data:
+        condition = data["condition"]
+        character = data["character"]
+
+        condition_level = calculate_condition_level(condition)
+
+        trend_condition = TrendCondition(isu_id=isu.id, timestamp=int(data.timestamp.timestamp()))
+
+        if condition_level == "info":
+            di[character][0].append(trend_condition)
+        elif condition_level == "warning":
+            di[character][1].append(trend_condition)
+        elif condition_level == "critical":
+            di[character][2].append(trend_condition)
+
+        
+
+        
     for character in character_list:
-        query = "SELECT * FROM `isu` WHERE `character` = %s"
-        isu_list = [Isu(**row) for row in select_all(query, (character,))]
 
-        character_info_isu_conditions = []
-        character_warning_isu_conditions = []
-        character_critical_isu_conditions = []
-        for isu in isu_list:
-            query = "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = %s ORDER BY timestamp DESC"
-            conditions = [IsuCondition(**row) for row in select_all(query, (isu.jia_isu_uuid,))]
-
-            if len(conditions) > 0:
-                isu_last_condition = conditions[0]
-                condition_level = calculate_condition_level(isu_last_condition.condition)
-
-                trend_condition = TrendCondition(isu_id=isu.id, timestamp=int(isu_last_condition.timestamp.timestamp()))
-
-                if condition_level == "info":
-                    character_info_isu_conditions.append(trend_condition)
-                elif condition_level == "warning":
-                    character_warning_isu_conditions.append(trend_condition)
-                elif condition_level == "critical":
-                    character_critical_isu_conditions.append(trend_condition)
+        character_info_isu_conditions = di[character][0]
+        character_warning_isu_conditions = di[character][1]
+        character_critical_isu_conditions = di[character][2]
 
         character_info_isu_conditions.sort(key=lambda c: c.timestamp, reverse=True)
         character_warning_isu_conditions.sort(key=lambda c: c.timestamp, reverse=True)
@@ -722,8 +771,9 @@ def get_trend():
                 critical=character_critical_isu_conditions,
             )
         )
-    
+
     return jsonify(res)
+
 
 
 @app.route("/api/condition/<jia_isu_uuid>", methods=["POST"])
