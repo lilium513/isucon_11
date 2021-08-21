@@ -722,7 +722,7 @@ def get_trend():
                 critical=character_critical_isu_conditions,
             )
         )
-    app.logger.info(res)
+    
     return jsonify(res)
 
 
@@ -793,7 +793,18 @@ app.add_url_rule("/register", view_func=get_index)
 
 def calculate_condition_level(condition: str) -> CONDITION_LEVEL:
     """ISUのコンディションの文字列からコンディションレベルを計算"""
-    warn_count = condition.count("=true")
+
+    di = {'is_dirty=true,is_overweight=true,is_broken=true':3,
+    'is_dirty=true,is_overweight=true,is_broken=false':2,
+    'is_dirty=true,is_overweight=false,is_broken=true':2,
+    'is_dirty=true,is_overweight=false,is_broken=false':1,
+    'is_dirty=false,is_overweight=true,is_broken=true':2,
+    'is_dirty=false,is_overweight=true,is_broken=false':1,
+    'is_dirty=false,is_overweight=false,is_broken=true':1,
+    'is_dirty=false,is_overweight=false,is_broken=false':0}
+     warn_count = -1 
+    if condition in di:
+        warn_count = di[condition]
 
     if warn_count == 0:
         condition_level = CONDITION_LEVEL.INFO
@@ -835,4 +846,4 @@ def is_valid_condition_format(condition_str: str) -> bool:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True, debug=True)
+    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True)
