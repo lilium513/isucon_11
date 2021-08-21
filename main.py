@@ -208,7 +208,7 @@ def get_user_id_from_session():
     if jia_user_id is None:
         raise Unauthorized("you are not signed in")
 
-    query = "SELECT COUNT(*) FROM `user` WHERE `jia_user_id` = %s"
+    query = "SELECT COUNT(1) FROM `user` WHERE `jia_user_id` = %s"
     (count,) = select_row(query, (jia_user_id,), dictionary=False)
 
     if count == 0:
@@ -445,7 +445,7 @@ def get_isu_graph(jia_isu_uuid):
         raise BadRequest("bad format: datetime")
     dt = truncate_datetime(dt, timedelta(hours=1))
 
-    query = "SELECT COUNT(*) FROM `isu` WHERE `jia_user_id` = %s AND `jia_isu_uuid` = %s"
+    query = "SELECT COUNT(1) FROM `isu` WHERE `jia_user_id` = %s AND `jia_isu_uuid` = %s"
     (count,) = select_row(query, (jia_user_id, jia_isu_uuid), dictionary=False)
     if count == 0:
         raise NotFound("not found: isu")
@@ -722,7 +722,7 @@ def get_trend():
                 critical=character_critical_isu_conditions,
             )
         )
-
+    app.logger.info(res)
     return jsonify(res)
 
 
@@ -744,7 +744,7 @@ def post_isu_condition(jia_isu_uuid):
         cnx.start_transaction()
         cur = cnx.cursor(dictionary=True)
 
-        query = "SELECT COUNT(*) AS cnt FROM `isu` WHERE `jia_isu_uuid` = %s"
+        query = "SELECT COUNT(1) AS cnt FROM `isu` WHERE `jia_isu_uuid` = %s"
         cur.execute(query, (jia_isu_uuid,))
         count = cur.fetchone()["cnt"]
         if count == 0:
@@ -835,4 +835,4 @@ def is_valid_condition_format(condition_str: str) -> bool:
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True)
+    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True, debug=True)
