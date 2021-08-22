@@ -168,7 +168,7 @@ def error_handler(e):
 
 
 mysql_connection_env = {
-    "host": getenv("MYSQL_HOST", "127.0.0.1"),
+    "host": getenv("MYSQL_HOST", "192.168.0.12"),
     "port": getenv("MYSQL_PORT", 3306),
     "user": getenv("MYSQL_USER", "isucon"),
     "password": getenv("MYSQL_PASS", "isucon"),
@@ -295,36 +295,85 @@ def get_isu_list():
     """ISUの一覧を取得"""
     jia_user_id = get_user_id_from_session()
 
-    query = "SELECT * FROM `isu` WHERE `jia_user_id` = %s ORDER BY `id` DESC"
-    isu_list = [Isu(**row) for row in select_all(query, (jia_user_id,))]
+    query = f"""
+        WITH 
+        temp AS(
+                    SELECT
+                        max(timestamp) AS  ts,
+                        jia_isu_uuid
+                    FROM 
+                     isu_condition
+                    GROUP BY 
+                     jia_isu_uuid
+                ),
+        temp2 AS (
+            SELECT 
+                t1.*
+            FROM 
+                isu_condition AS t1
+            JOIN  
+                temp AS t2
+            ON
+            t1.timestamp = t2.ts
+            AND 
+            t1.jia_isu_uuid = t2.jia_isu_uuid
+        ),     
+        temp3 AS(
+            SELECT 
+                t1.*,
+                t2.condition,
+                t2.is_sitting,
+                t2.timestamp,
+                t2.message
+            FROM 
+                    (select 
+                        *
+                    FROM 
+                        isu         
+                    WHERE 
+                        `jia_user_id` = "{jia_user_id}" 
+                    )
+                AS t1 
+            LEFT OUTER JOIN
+                temp2 AS t2
+            ON
+                t1.jia_isu_uuid = t2.jia_isu_uuid
+        )
+        SELECT
+            id
+        FROM 
+            temp3 
+        ORDER BY 
+            `id` DESC;
+        """
+    all_data = select_all(query)
+    # for k in temp.keys():
+    #     app.logger.info(k)
+  
+    # query = "SELECT * FROM `isu` WHERE `jia_user_id` = %s ORDER BY `id` DESC"
+    # isu_list = [Isu(**row) for row in select_all(query, (jia_user_id,))]
 
     response_list = []
-    for isu in isu_list:
-        found_last_condition = True
-        query = "SELECT * FROM `isu_condition` WHERE `jia_isu_uuid` = %s ORDER BY `timestamp` DESC LIMIT 1"
-        row = select_row(query, (isu.jia_isu_uuid,))
-        if row is None:
-            found_last_condition = False
-        last_condition = IsuCondition(**row) if found_last_condition else None
-
+    for isu in all_data:
+    
         formatted_condition = None
-        if found_last_condition:
+        if isu["is_sitting"] != None: 
             formatted_condition = GetIsuConditionResponse(
-                jia_isu_uuid=last_condition.jia_isu_uuid,
-                isu_name=isu.name,
-                timestamp=int(last_condition.timestamp.timestamp()),
-                is_sitting=last_condition.is_sitting,
-                condition=last_condition.condition,
-                condition_level=calculate_condition_level(last_condition.condition),
-                message=last_condition.message,
+                jia_isu_uuid=isu["jia_isu_uuid"],
+                isu_name=isu["name"],
+                timestamp=int(isu["timestamp"].timestamp()),
+                is_sitting=isu["is_sitting"],
+                condition=isu["condition"],
+                condition_level=calculate_condition_level(isu["condition"]),
+                message=isu["message"],
             )
 
         response_list.append(
             GetIsuListResponse(
-                id=isu.id,
-                jia_isu_uuid=isu.jia_isu_uuid,
-                name=isu.name,
-                character=isu.character,
+                id=isu["id"],
+                jia_isu_uuid=isu["jia_isu_uuid"],
+                name=isu["name"],
+                character=isu["character"],
                 latest_isu_condition=formatted_condition,
             )
         )
@@ -541,7 +590,6 @@ def generate_isu_graph_response(jia_isu_uuid: str, graph_date: datetime) -> list
 
     return response_list
 
-
 def calculate_graph_data_point(isu_conditions: list[IsuCondition]) -> GraphDataPoint:
     """複数のISUのコンディションからグラフの一つのデータ点を計算"""
     conditions_count = {"is_broken": 0, "is_dirty": 0, "is_overweight": 0}
@@ -583,6 +631,7 @@ def calculate_graph_data_point(isu_conditions: list[IsuCondition]) -> GraphDataP
             is_dirty=int(conditions_count["is_dirty"] * 100 / isu_conditions_length),
         ),
     )
+
 
 
 @app.route("/api/condition/<jia_isu_uuid>", methods=["GET"])
@@ -680,13 +729,13 @@ def get_isu_conditions_from_db(
 
 @app.route("/api/trend", methods=["GET"])
 def get_trend():
-   all_data = select_all(
+    all_data = select_all(
                 """WITH temp AS(
             SELECT
-            max(timestamp) AS  ts,
-            jia_isu_uuid
+                max(timestamp) AS  ts,
+                jia_isu_uuid
             FROM 
-            isu_condition
+             isu_condition
             GROUP BY 
             jia_isu_uuid
         ),
@@ -707,15 +756,17 @@ def get_trend():
         temp3 AS (
             SELECT 
                 t1.character,
+                t1.id,
                 t2.`condition`,
                 t2.jia_isu_uuid,
                 t2.timestamp
             FROM 
                 isu AS t1
-            JOIN
+            LEFT JOIN
                 temp2 AS t2
             ON
             t1.jia_isu_uuid = t2.jia_isu_uuid
+            
         )
 
         SELECT 
@@ -727,21 +778,17 @@ def get_trend():
     )
 
     character_list = [row["character"] for row in all_data]
+    character_list = list(set(character_list))
     di = {}
     for c in character_list:
         di[c] = [[],[],[]]
-        
-
-   
-
-
     for data in all_data:
         condition = data["condition"]
         character = data["character"]
 
         condition_level = calculate_condition_level(condition)
 
-        trend_condition = TrendCondition(isu_id=isu.id, timestamp=int(data.timestamp.timestamp()))
+        trend_condition = TrendCondition(isu_id=int(data["id"]), timestamp=int(data["timestamp"].timestamp()))
 
         if condition_level == "info":
             di[character][0].append(trend_condition)
@@ -751,8 +798,8 @@ def get_trend():
             di[character][2].append(trend_condition)
 
         
-
-        
+    app.logger.info(condition)
+    res = []
     for character in character_list:
 
         character_info_isu_conditions = di[character][0]
@@ -799,26 +846,28 @@ def post_isu_condition(jia_isu_uuid):
         count = cur.fetchone()["cnt"]
         if count == 0:
             raise NotFound("not found: isu")
-
+        query = """
+                INSERT
+                INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)
+                VALUES """
+        temps = []
         for cond in req:
             if not is_valid_condition_format(cond.condition):
                 raise BadRequest("bad request body")
 
-            query = """
-                INSERT
-                INTO `isu_condition` (`jia_isu_uuid`, `timestamp`, `is_sitting`, `condition`, `message`)
-                VALUES (%s, %s, %s, %s, %s)
-                """
-            cur.execute(
-                query,
-                (
+            s = "(%s, %s, %s, %s, %s)" %  (
                     jia_isu_uuid,
                     datetime.fromtimestamp(cond.timestamp, tz=TZ),
                     cond.is_sitting,
                     cond.condition,
                     cond.message,
-                ),
-            )
+                )
+            temps.append(s)
+        query = query + ",".joint(temps)
+        cur.execute(
+            query
+            
+        )
 
         cnx.commit()
     except:
@@ -852,7 +901,7 @@ def calculate_condition_level(condition: str) -> CONDITION_LEVEL:
     'is_dirty=false,is_overweight=true,is_broken=false':1,
     'is_dirty=false,is_overweight=false,is_broken=true':1,
     'is_dirty=false,is_overweight=false,is_broken=false':0}
-     warn_count = -1 
+    warn_count = -1 
     if condition in di:
         warn_count = di[condition]
 
@@ -870,30 +919,17 @@ def calculate_condition_level(condition: str) -> CONDITION_LEVEL:
 
 def is_valid_condition_format(condition_str: str) -> bool:
     """ISUのコンディションの文字列がcsv形式になっているか検証"""
-    keys = ["is_dirty=", "is_overweight=", "is_broken="]
-    value_true = "true"
-    value_false = "false"
+    di = {'is_dirty=true,is_overweight=true,is_broken=true':3,
+    'is_dirty=true,is_overweight=true,is_broken=false':2,
+    'is_dirty=true,is_overweight=false,is_broken=true':2,
+    'is_dirty=true,is_overweight=false,is_broken=false':1,
+    'is_dirty=false,is_overweight=true,is_broken=true':2,
+    'is_dirty=false,is_overweight=true,is_broken=false':1,
+    'is_dirty=false,is_overweight=false,is_broken=true':1,
+    'is_dirty=false,is_overweight=false,is_broken=false':0}
 
-    idx_cond_str = 0
-    for idx_keys, key in enumerate(keys):
-        if not condition_str[idx_cond_str:].startswith(key):
-            return False
-        idx_cond_str += len(key)
-
-        if condition_str[idx_cond_str:].startswith(value_true):
-            idx_cond_str += len(value_true)
-        elif condition_str[idx_cond_str:].startswith(value_false):
-            idx_cond_str += len(value_false)
-        else:
-            return False
-
-        if idx_keys < (len(keys) - 1):
-            if condition_str[idx_cond_str] != ",":
-                return False
-            idx_cond_str += 1
-
-    return idx_cond_str == len(condition_str)
+    return condition_str in di
 
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True)
+    app.run(host="0.0.0.0", port=getenv("SERVER_APP_PORT", 3000), threaded=True,debug = True)
